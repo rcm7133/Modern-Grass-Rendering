@@ -1,0 +1,69 @@
+#pragma kernel CSMain
+
+Texture2D<float4> heightMap;
+Texture2D<float4> noise;
+
+float3 terrainPos;
+float3 terrainSize; // x=width, y=height, z=length
+int2 gridSize;      // countX, countZ
+float grassHeight;
+float grassPosNoiseStrength;
+float grassHeightNoiseStrength;
+float grassCullCheckRadius;
+
+struct GrassData
+{
+    float3 position;
+    float height;
+    float2 worldUV;
+    float checkRadius;
+};
+
+RWStructuredBuffer<GrassData> grassData;
+SamplerState sampler_LinearClamp;
+
+[numthreads(8,8,1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= gridSize.x || id.y >= gridSize.y)
+        return;
+
+    uint index = id.y * gridSize.x + id.x;
+
+    // Step size in world space
+    float stepX = terrainSize.x / gridSize.x;
+    float stepZ = terrainSize.z / gridSize.y;
+
+    // World position centered in cell
+    float worldX = terrainPos.x + id.x * stepX + stepX * 0.5;
+    float worldZ = terrainPos.z + id.y * stepZ + stepZ * 0.5;
+    
+    float2 noiseUV = float2((worldX - terrainPos.x) / terrainSize.x,
+                            (worldZ - terrainPos.z) / terrainSize.z);
+    
+    // Remap from [0,1] to [-1,1]
+    float2 noiseValue = noise.SampleLevel(sampler_LinearClamp, noiseUV, 0).rg;
+    float2 n = (noiseValue * 2.0 - 1.0) * grassPosNoiseStrength;
+    
+    worldX += n.x;
+    worldZ += n.y;
+
+    // recalc uv with the new noisy position
+    float2 uv = float2((worldX - terrainPos.x) / terrainSize.x,
+                       (worldZ - terrainPos.z) / terrainSize.z);
+    
+    float worldY = heightMap.SampleLevel(sampler_LinearClamp, uv, 0).r * terrainSize.y + terrainPos.y + 0.275;
+
+    GrassData grass;
+    grass.position = float3(worldX, worldY, worldZ);
+    // Grass Height Variance
+    float heightNoise = noise.SampleLevel(sampler_LinearClamp, uv, 0).r;
+    // Remap from [0,1] to [-1,1]
+    float clampedHeightNoise = (heightNoise * 2.0 - 1.0) * grassHeightNoiseStrength;
+    
+    grass.height = grassHeight + clampedHeightNoise;
+    grass.worldUV = saturate(uv);
+    grass.checkRadius = grassCullCheckRadius;
+
+    grassData[index] = grass;
+}

@@ -1,0 +1,64 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct GrassData
+{
+    float3 position;
+    float height;
+    float2 worldUV;
+    float checkRadius;
+};
+
+float lodDistance;
+float3 cameraPosition;
+
+RWStructuredBuffer<GrassData> grassData;
+AppendStructuredBuffer<GrassData> grassDataHLOD;
+AppendStructuredBuffer<GrassData> grassDataLLOD;
+AppendStructuredBuffer<GrassData> culledGrassData;
+uint grassCount;
+float4 frustumPlanes[6];
+bool frustumCulling;
+
+
+[numthreads(64,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= grassCount)
+        return;
+
+    GrassData grass = grassData[index];
+    
+    if (frustumCulling)
+    {
+        // Culling Calculations
+        // Check a sphere to see if it's outside any frustum planes
+        bool visible = true;
+        for (int i = 0; i < 6; i++)
+        {
+            float dist = dot(frustumPlanes[i].xyz, grass.position) + frustumPlanes[i].w;
+        
+            if (dist < -grass.checkRadius)
+            {
+                visible = false;
+                break;
+            }
+        }
+        // Ignore if not visible
+        if (!visible)
+            return;
+    }
+    
+    // LOD Calculations
+    float d = distance(cameraPosition, grass.position);
+
+    if (d <= lodDistance)
+    {
+        grassDataHLOD.Append(grass);
+    }
+    else
+    {
+        grassDataLLOD.Append(grass);
+    }
+}
